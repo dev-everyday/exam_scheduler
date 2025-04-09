@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'users',
     'examslots',
     'reservation',
+    'django_apscheduler',
 ]
 
 MIDDLEWARE = [
