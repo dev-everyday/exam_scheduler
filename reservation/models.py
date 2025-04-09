@@ -1,6 +1,8 @@
 from django.db import models
-from users.models import User
+from django.contrib.auth import get_user_model
 from examslots.models import ExamSlot
+
+User = get_user_model()
 
 class Reservation(models.Model):
     STATUS_CHOICES = [
@@ -13,7 +15,8 @@ class Reservation(models.Model):
     exam_slots = models.ManyToManyField(ExamSlot, related_name='reservations')
     start_time = models.DateTimeField()
     end_time = models.DateTimeField()
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    count = models.IntegerField(default=1, help_text="예약 인원 수")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
