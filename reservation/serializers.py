@@ -6,12 +6,14 @@ import pytz
 
 class ReservationCreateSerializer(serializers.Serializer):
     start_time = serializers.DateTimeField(
-        format="%Y-%m-%d %H:%M:%S",
-        help_text="예약 시작 시간 (YYYY-MM-DD HH:MM:SS 형식)"
+        format="%Y-%m-%d %H:%M",
+        input_formats=["%Y-%m-%d %H:%M"],
+        help_text="예약 시작 시간 (YYYY-MM-DD HH:MM 형식, 예: 2025-04-15 09:00)"
     )
     end_time = serializers.DateTimeField(
-        format="%Y-%m-%d %H:%M:%S",
-        help_text="예약 종료 시간 (YYYY-MM-DD HH:MM:SS 형식)"
+        format="%Y-%m-%d %H:%M",
+        input_formats=["%Y-%m-%d %H:%M"],
+        help_text="예약 종료 시간 (YYYY-MM-DD HH:MM 형식, 예: 2025-04-15 11:00)"
     )
     count = serializers.IntegerField(
         min_value=1,
@@ -22,6 +24,16 @@ class ReservationCreateSerializer(serializers.Serializer):
         start_time = data.get('start_time')
         end_time = data.get('end_time')
         count = data.get('count')
+
+        if start_time.minute != 0:
+            raise serializers.ValidationError({
+                'start_time': '시험 시작 시간은 정각(00분)이어야 합니다.'
+            })
+        
+        if end_time.minute != 0:
+            raise serializers.ValidationError({
+                'end_time': '시험 종료 시간은 정각(00분)이어야 합니다.'
+            })
 
         korea_tz = pytz.timezone('Asia/Seoul')
         current_datetime = timezone.now().astimezone(korea_tz)
@@ -53,5 +65,5 @@ class ReservationCreateSerializer(serializers.Serializer):
 class ReservationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Reservation
-        fields = ['id', 'user', 'start_time', 'end_time', 'status', 'created_at']
+        fields = ['id', 'user', 'start_time', 'end_time', 'status', 'created_at', 'count']
         read_only_fields = ['id', 'user', 'status', 'created_at'] 
