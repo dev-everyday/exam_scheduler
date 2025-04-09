@@ -2,7 +2,7 @@ from django.db import models
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
-from .utils import with_distributed_lock
+from datetime import timedelta
 
 class ExamSlot(models.Model):
     date = models.DateField()
@@ -30,42 +30,92 @@ class ExamSlot(models.Model):
         super().save(*args, **kwargs)
 
     @classmethod
-    def get_available_slots(cls, date):
-        return cls.objects.filter(
-            date=date,
-            current_count__lt=models.F('max_capacity')
-        ).order_by('hour')
+    def check_and_get_available_slots(cls, start_time, end_time, count):
+        available_slots = cls.get_available_slots(start_time, end_time)
+        
+        if not available_slots:
+            raise ValidationError("해당 시간대에 예약 가능한 자리가 없습니다.")
+            
+        for slot in available_slots:
+            available_count = slot.max_capacity - slot.current_count
+            if available_count < count:
+                raise ValidationError(f"{slot.date} {slot.hour}시에 {count}명을 수용할 수 없습니다. (가용 인원: {available_count}명)")
+                
+        return available_slots
+
+    @classmethod
+    def get_available_slots(cls, start_time, end_time):
+        if start_time.date() == end_time.date():
+            return cls.objects.filter(
+                date=start_time.date(),
+                hour__gte=start_time.hour,
+                hour__lt=end_time.hour,
+                current_count__lt=models.F('max_capacity')
+            ).order_by('hour')
+        
+        slots = []
+        current_date = start_time.date()
+        end_date = end_time.date()
+        
+        while current_date <= end_date:
+            if current_date == start_time.date():
+                slots.extend(cls.objects.filter(
+                    date=current_date,
+                    hour__gte=start_time.hour,
+                    current_count__lt=models.F('max_capacity')
+                ).order_by('hour'))
+            elif current_date == end_date:
+                slots.extend(cls.objects.filter(
+                    date=current_date,
+                    hour__lt=end_time.hour,
+                    current_count__lt=models.F('max_capacity')
+                ).order_by('hour'))
+            else:
+                slots.extend(cls.objects.filter(
+                    date=current_date,
+                    current_count__lt=models.F('max_capacity')
+                ).order_by('hour'))
+            
+            current_date += timedelta(days=1)
+        
+        return slots
 
     @transaction.atomic
-    @with_distributed_lock('exam_slot', blocking_timeout=10)
-    def update_capacity(self, count, status='pending'):
+    def update_capacity(self, count):
         self.refresh_from_db()
         
-        if status == 'accepted':
-            if self.current_count + count > self.max_capacity:
-                raise ValidationError("최대 인원 수를 초과할 수 없습니다.")
-            self.current_count += count
-            self.save()
+        if self.current_count + count > self.max_capacity:
+            raise ValidationError("최대 인원 수를 초과할 수 없습니다.")
+        
+        self.current_count += count
+        self.save()
+        
         return True
 
     @classmethod
     @transaction.atomic
-    def reserve_slots(cls, slots, count, status='pending'):
+    def update_slots(cls, slots, count):
         success = True
         updated_slots = []
 
         for slot in slots:
             try:
-                if slot.update_capacity(count, status):
+                if slot.update_capacity(count):
                     updated_slots.append(slot)
                 else:
                     success = False
                     break
-            except ValidationError:
+            except ValidationError as e:
+                success = False
+                break
+            except Exception as e:
                 success = False
                 break
 
         if not success:
             for slot in updated_slots:
-                slot.update_capacity(-count, status)
+                try:
+                    slot.update_capacity(-count)
+                except Exception as e:
+                    pass
             raise ValidationError("예약 처리 중 오류가 발생했습니다.")
