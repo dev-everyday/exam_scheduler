@@ -1,12 +1,12 @@
 from django.db import models
 from django.core.exceptions import ValidationError
-from datetime import timedelta
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 # Create your models here.
 
 class ExamSlot(models.Model):
-    start_time = models.DateTimeField()
-    end_time = models.DateTimeField()
+    date = models.DateField()
+    hour = models.IntegerField(validators=[MinValueValidator(0), MaxValueValidator(23)])
     max_capacity = models.IntegerField(default=50000)
     current_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -15,14 +15,15 @@ class ExamSlot(models.Model):
     class Meta:
         db_table = 'exam_slots'
         app_label = 'examslots'
-        ordering = ['start_time']
+        ordering = ['date', 'hour']
+        unique_together = ('date', 'hour')
 
     def __str__(self):
-        return f"Exam Slot: {self.start_time} - {self.end_time}"
+        return f"Exam Slot: {self.date} - {self.hour}"
 
     def clean(self):
-        if self.end_time <= self.start_time:
-            raise ValidationError("종료 시간은 시작 시간보다 이후여야 합니다.")
+        if self.hour < 0 or self.hour > 23:
+            raise ValidationError("시간은 0에서 23 사이여야 합니다.")
 
     def save(self, *args, **kwargs):
         self.clean()
