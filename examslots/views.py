@@ -1,6 +1,7 @@
 from django.shortcuts import render
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -53,14 +54,25 @@ from django.db import models
                     'error': openapi.Schema(type=openapi.TYPE_STRING)
                 }
             )
+        ),
+        401: openapi.Response(
+            description="인증 실패",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
         )
     }
 )
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def get_available_slots(request):
     """
     특정 날짜의 예약 가능한 시간대 조회 API
     
+    - 로그인이 필요합니다.
     - 현재 시간에서 3일 이상 이후의 날짜만 조회 가능합니다.
     - 3개월 이내의 날짜만 조회 가능합니다.
     - 남은 자리가 0인 시간대는 제외됩니다.
