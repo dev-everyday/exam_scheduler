@@ -85,51 +85,123 @@ def logout_view(request):
         'message': '로그아웃을 성공하였습니다.'
     })
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated, IsAdminUser])
-def user_list(request):
-    """
-    사용자 목록 조회 API
-    
-    관리자만 모든 사용자 목록을 조회할 수 있습니다.
-    """
-    users = User.objects.all()
-    serializer = UserSerializer(users, many=True)
-    return Response({'users': serializer.data})
-
-@api_view(['POST'])
-def user_create(request):
-    """
-    사용자 생성 API
-    
-    새로운 사용자를 생성합니다.
-    """
-    serializer = UserCreateSerializer(data=request.data)
-    if serializer.is_valid():
-        username = serializer.validated_data['username']
-        password = serializer.validated_data['password']
-        
-        if User.objects.filter(username=username).exists():
-            return Response(
-                {'error': '이미 존재하는 사용자명입니다.'},
-                status=status.HTTP_400_BAD_REQUEST
+@swagger_auto_schema(
+    method='get',
+    operation_summary="사용자 목록 조회 API",
+    operation_description="관리자만 모든 사용자 목록을 조회할 수 있습니다.",
+    responses={
+        200: openapi.Response(
+            description="사용자 목록 조회 성공",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'users': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                                'username': openapi.Schema(type=openapi.TYPE_STRING),
+                                'is_superuser': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                                'created_at': openapi.Schema(type=openapi.TYPE_STRING)
+                            }
+                        )
+                    )
+                }
             )
-        
-        user = User.objects.create_user(
-            username=username,
-            password=password
+        ),
+        401: openapi.Response(
+            description="인증 실패",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        403: openapi.Response(
+            description="권한 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
         )
-        
-        return Response({
-            'message': '사용자가 성공적으로 생성되었습니다.',
-            'user_id': user.id,
-            'username': user.username
-        })
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    }
+)
+@swagger_auto_schema(
+    method='post',
+    operation_summary="사용자 생성 API",
+    operation_description="새로운 사용자를 생성합니다.",
+    request_body=UserCreateSerializer,
+    responses={
+        201: openapi.Response(
+            description="사용자 생성 성공",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    'user_id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'username': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        400: openapi.Response(
+            description="잘못된 요청",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'error': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        )
+    }
+)
+@api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def user_view(request):
+    """
+    사용자 API
+    
+    GET: 사용자 목록 조회
+    - 관리자만 모든 사용자 목록을 조회할 수 있습니다.
+    
+    POST: 사용자 생성
+    - 새로운 사용자를 생성합니다.
+    """
+    if request.method == 'GET':
+        users = User.objects.all()
+        serializer = UserSerializer(users, many=True)
+        return Response({'users': serializer.data})
+    
+    elif request.method == 'POST':
+        serializer = UserCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            username = serializer.validated_data['username']
+            password = serializer.validated_data['password']
+            
+            if User.objects.filter(username=username).exists():
+                return Response(
+                    {'error': '이미 존재하는 사용자명입니다.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            user = User.objects.create_user(
+                username=username,
+                password=password
+            )
+            
+            return Response({
+                'message': '사용자가 성공적으로 생성되었습니다.',
+                'user_id': user.id,
+                'username': user.username
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 @api_view(['GET', 'PUT', 'DELETE'])
 @permission_classes([IsAuthenticated])
-def user_detail(request, user_id):
+def user_detail_view(request, user_id):
     """
     사용자 상세 조회/수정/삭제 API
     
