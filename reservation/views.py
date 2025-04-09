@@ -1,19 +1,19 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from django.db import transaction
+from django.db import transaction, connection
 from django.utils import timezone
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, PermissionDenied
 import pytz
-from datetime import timedelta
+from datetime import timedelta, datetime
 from .models import Reservation
-from .serializers import ReservationCreateSerializer, ReservationSerializer
+from .serializers import ReservationSerializer, ReservationDetailSerializer
 from examslots.models import ExamSlot
 from django.db import models
-import redis_lock
+from django.shortcuts import get_object_or_404
 
 # Create your views here.
 
@@ -34,7 +34,6 @@ import redis_lock
                             properties={
                                 'id': openapi.Schema(type=openapi.TYPE_INTEGER),
                                 'user': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                'username': openapi.Schema(type=openapi.TYPE_STRING),
                                 'start_time': openapi.Schema(type=openapi.TYPE_STRING),
                                 'end_time': openapi.Schema(type=openapi.TYPE_STRING),
                                 'status': openapi.Schema(type=openapi.TYPE_STRING),
@@ -150,14 +149,14 @@ def reservation_view(request):
             reservations = Reservation.objects.filter(user=request.user)
         
         reservations = reservations.order_by('-created_at')
-        serializer = ReservationSerializer(reservations, many=True)
+        serializer = ReservationDetailSerializer(reservations, many=True)
         
         return Response({
             'reservations': serializer.data
         })
     
     elif request.method == 'POST':
-        serializer = ReservationCreateSerializer(data=request.data)
+        serializer = ReservationSerializer(data=request.data)
         if serializer.is_valid():
             start_time = serializer.validated_data['start_time']
             end_time = serializer.validated_data['end_time']
@@ -181,55 +180,30 @@ def reservation_view(request):
                 )
             
             try:
-                available_slots = list(ExamSlot.objects.filter(
-                    date=start_time.date(),
-                    hour__gte=start_time.hour,
-                    hour__lt=end_time.hour,
-                    current_count__lt=models.F('max_capacity')
-                ).order_by('hour'))
+                available_slots = ExamSlot.check_and_get_available_slots(start_time, end_time, count)
                 
-                if not available_slots:
-                    return Response(
-                        {'error': '해당 시간대에 예약 가능한 자리가 없습니다.'},
-                        status=status.HTTP_400_BAD_REQUEST
+                with transaction.atomic():
+                    reservation = Reservation.objects.create(
+                        user=request.user,
+                        start_time=start_time,
+                        end_time=end_time,
+                        count=count,
+                        status='pending'
                     )
+                    
+                    for slot in available_slots:
+                        reservation.exam_slots.add(slot)
+                    
+                    response_serializer = ReservationDetailSerializer(reservation)
+                    return Response({
+                        'message': '예약이 성공적으로 신청되었습니다.',
+                        'reservation': response_serializer.data
+                    }, status=status.HTTP_201_CREATED)
                 
-                for slot in available_slots:
-                    if slot.max_capacity - slot.current_count < count:
-                        return Response(
-                            {'error': f'{slot.hour}시에 예약 가능한 자리가 부족합니다. (남은 자리: {slot.max_capacity - slot.current_count}명)'},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-                
-                reservation = Reservation.objects.create(
-                    user=request.user,
-                    start_time=start_time,
-                    end_time=end_time,
-                    count=count,
-                    status='pending'
-                )
-                
-                try:
-                    ExamSlot.reserve_slots(available_slots, count)
-                    reservation.exam_slots.add(*available_slots)
-                except ValidationError as e:
-                    reservation.delete()
-                    return Response(
-                        {'error': str(e)},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                reservation_serializer = ReservationSerializer(reservation)
-                
-                return Response({
-                    'message': '예약이 성공적으로 신청되었습니다.',
-                    'reservation': reservation_serializer.data
-                }, status=status.HTTP_201_CREATED)
-                
-            except redis_lock.NotAcquired:
+            except ValidationError as e:
                 return Response(
-                    {'error': '현재 다른 예약이 처리 중입니다. 잠시 후 다시 시도해주세요.'},
-                    status=status.HTTP_409_CONFLICT
+                    {'error': str(e)},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
             except Exception as e:
                 return Response(
@@ -238,3 +212,361 @@ def reservation_view(request):
                 )
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+@swagger_auto_schema(
+    method='get',
+    operation_summary="예약 상세 조회 API",
+    operation_description="예약 상세 정보를 조회합니다. 본인의 예약만 조회할 수 있습니다.",
+    responses={
+        200: openapi.Response(
+            description="예약 상세 조회 성공",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'user': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'start_time': openapi.Schema(type=openapi.TYPE_STRING),
+                    'end_time': openapi.Schema(type=openapi.TYPE_STRING),
+                    'status': openapi.Schema(type=openapi.TYPE_STRING),
+                    'created_at': openapi.Schema(type=openapi.TYPE_STRING),
+                    'count': openapi.Schema(type=openapi.TYPE_INTEGER)
+                }
+            )
+        ),
+        401: openapi.Response(
+            description="인증 실패",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        403: openapi.Response(
+            description="권한 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        404: openapi.Response(
+            description="예약 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        )
+    }
+)
+@swagger_auto_schema(
+    method='put',
+    operation_summary="예약 수정 API",
+    operation_description="예약 정보를 수정합니다. 대기 중인 예약만 수정할 수 있습니다.",
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'start_time': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='date-time',
+                example='2025-04-15 09:00',
+                description='예약 시작 시간 (YYYY-MM-DD HH:MM 형식, 예: 2025-04-15 09:00)'
+            ),
+            'end_time': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='date-time',
+                example='2025-04-15 11:00',
+                description='예약 종료 시간 (YYYY-MM-DD HH:MM 형식, 예: 2025-04-15 11:00)'
+            ),
+            'count': openapi.Schema(
+                type=openapi.TYPE_INTEGER,
+                example=1,
+                description='예약 인원 수'
+            )
+        }
+    ),
+    responses={
+        200: openapi.Response(
+            description="예약 수정 성공",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'user': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'start_time': openapi.Schema(type=openapi.TYPE_STRING),
+                    'end_time': openapi.Schema(type=openapi.TYPE_STRING),
+                    'status': openapi.Schema(type=openapi.TYPE_STRING),
+                    'created_at': openapi.Schema(type=openapi.TYPE_STRING),
+                    'count': openapi.Schema(type=openapi.TYPE_INTEGER)
+                }
+            )
+        ),
+        400: openapi.Response(
+            description="잘못된 요청",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'error': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        401: openapi.Response(
+            description="인증 실패",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        403: openapi.Response(
+            description="권한 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        404: openapi.Response(
+            description="예약 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        )
+    }
+)
+@swagger_auto_schema(
+    method='delete',
+    operation_summary="예약 삭제 API",
+    operation_description="예약을 삭제합니다. 대기 중인 예약만 삭제할 수 있습니다.",
+    responses={
+        204: openapi.Response(
+            description="예약 삭제 성공"
+        ),
+        400: openapi.Response(
+            description="잘못된 요청",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'error': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        401: openapi.Response(
+            description="인증 실패",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        403: openapi.Response(
+            description="권한 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        404: openapi.Response(
+            description="예약 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        )
+    }
+)
+@api_view(['GET', 'PUT', 'DELETE'])
+@permission_classes([IsAuthenticated])
+def reservation_detail_view(request, reservation_id):
+    reservation = get_object_or_404(Reservation, id=reservation_id)
+    
+    if request.method == 'GET':
+        if not request.user.is_staff and request.user != reservation.user:
+            raise PermissionDenied("본인의 예약만 조회할 수 있습니다.")
+        serializer = ReservationDetailSerializer(reservation)
+        return Response(serializer.data)
+    
+    elif request.method == 'PUT':
+        if not request.user.is_staff and request.user != reservation.user:
+            raise PermissionDenied("본인의 예약만 수정할 수 있습니다.")
+        
+        if not request.user.is_staff and reservation.status != 'pending':
+            return Response(
+                {"error": "대기 중인 예약만 수정할 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = ReservationSerializer(data=request.data, partial=True)
+        if serializer.is_valid():
+            try:
+                validated_data = serializer.validated_data
+                
+                start_time = validated_data.get('start_time', reservation.start_time)
+                end_time = validated_data.get('end_time', reservation.end_time)
+                count = validated_data.get('count', reservation.count)
+                
+                new_slots = ExamSlot.check_and_get_available_slots(
+                    start_time,
+                    end_time,
+                    count
+                )
+                
+                with transaction.atomic():
+                    reservation.start_time = start_time
+                    reservation.end_time = end_time
+                    reservation.count = count
+                    reservation.save()
+                    
+                    reservation.exam_slots.set(new_slots)
+                    
+                    response_serializer = ReservationDetailSerializer(reservation)
+                    return Response(response_serializer.data)
+                    
+            except ValidationError as e:
+                return Response(
+                    {"error": str(e)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            except Exception as e:
+                return Response(
+                    {'error': '예약 처리 중 오류가 발생했습니다. 다시 시도해주세요.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    elif request.method == 'DELETE':
+        if not request.user.is_staff and request.user != reservation.user:
+            raise PermissionDenied("본인의 예약만 삭제할 수 있습니다.")
+        
+        if not request.user.is_staff and reservation.status != 'pending':
+            return Response(
+                {"error": "대기 중인 예약만 삭제할 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            with transaction.atomic():
+                if reservation.status == 'accepted':
+                    ExamSlot.update_slots(reservation.exam_slots.all(), -reservation.count)
+                
+                reservation.status = 'cancelled'
+                reservation.save()
+                
+                reservation.exam_slots.clear()
+
+            return Response({'message': '예약이 성공적으로 취소되었습니다.'}, status=status.HTTP_204_NO_CONTENT)
+        except ValidationError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+@swagger_auto_schema(
+    method='post',
+    operation_summary="예약 확정 API",
+    operation_description="관리자가 예약을 확정합니다. 확정 중에는 다른 예약 관련 작업이 불가능합니다.",
+    responses={
+        200: openapi.Response(
+            description="예약 확정 성공",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'id': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'user': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'start_time': openapi.Schema(type=openapi.TYPE_STRING),
+                    'end_time': openapi.Schema(type=openapi.TYPE_STRING),
+                    'status': openapi.Schema(type=openapi.TYPE_STRING),
+                    'created_at': openapi.Schema(type=openapi.TYPE_STRING),
+                    'count': openapi.Schema(type=openapi.TYPE_INTEGER)
+                }
+            )
+        ),
+        400: openapi.Response(
+            description="잘못된 요청",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'error': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        403: openapi.Response(
+            description="권한 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        404: openapi.Response(
+            description="예약 없음",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        )
+    }
+)
+@api_view(['POST'])
+@permission_classes([IsAdminUser])
+def confirm_reservation_view(request, reservation_id):
+    reservation = get_object_or_404(Reservation, id=reservation_id)
+    
+    exam_slots = list(reservation.exam_slots.all())
+    if reservation.status != 'pending':
+        return Response(
+            {"error": "대기 중인 예약만 확정할 수 있습니다."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        with transaction.atomic():
+            reservation.status = 'accepted'
+            reservation.save()
+            
+            ExamSlot.update_slots(exam_slots, reservation.count)
+            
+            for slot in exam_slots:
+                slot.refresh_from_db()
+            
+            transaction.on_commit(lambda: check_reservation_status_after_confirm(reservation_id))
+            
+            serializer = ReservationDetailSerializer(reservation)
+            return Response(serializer.data)
+            
+    except ValidationError as e:
+        return Response(
+            {"error": str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response(
+            {"error": "예약 확정 중 오류가 발생했습니다."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+def check_reservation_status_after_confirm(reservation_id):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT status FROM reservations WHERE id = %s", [reservation_id])
+            result = cursor.fetchone()
+            return result[0] if result else None
+    except Exception as e:
+        print(f"예약 상태 확인 중 오류: {e}")
+        return None
