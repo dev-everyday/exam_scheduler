@@ -59,10 +59,8 @@ SECRET_KEY=your_secret_key
 6. Redis 설치 및 실행
 
 ```bash
-# Redis 설치 (Windows)
-# https://github.com/microsoftarchive/redis/releases 에서 Redis-x64-xxx.msi 다운로드 및 설치
-
-# Redis 서버 실행 (Windows)
+# Redis 설치 및 실행 (Windows)
+# Window의 경우 https://github.com/microsoftarchive/redis/releases 에서 Redis-x64-xxx.msi 다운로드 및 설치
 redis-server
 
 # Redis 서버 상태 확인
@@ -127,7 +125,7 @@ http://localhost:8000/swagger/
    - 토큰 입력 (형식: Token your\_token\_here)
    - 'Authorize' 버튼 클릭하여 인증 완료
 
-## 4. 주요 API 목록
+## 4. API 목록
 
 | 메서드 | 엔드포인트 | 설명 |
 |--------|-------------|------|
