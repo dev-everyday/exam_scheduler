@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import User
+from rest_framework.authtoken.models import Token
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -31,3 +32,15 @@ class LoginSerializer(serializers.Serializer):
 
 class UserListResponseSerializer(serializers.Serializer):
     users = UserSerializer(many=True)
+
+class AuthTokenSerializer(serializers.Serializer):
+    token = serializers.CharField(help_text='인증 토큰')
+    user = UserSerializer(help_text='사용자 정보')
+
+    @classmethod
+    def get_token_response(cls, user):
+        token, _ = Token.objects.get_or_create(user=user)
+        return {
+            'token': token.key,
+            'user': UserSerializer(user).data
+        }
