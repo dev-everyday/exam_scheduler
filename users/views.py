@@ -7,13 +7,13 @@ from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 from .models import User
 from .serializers import (
-    ErrorResponseSerializer,
     UserListResponseSerializer,
     UserSerializer,
     UserCreateSerializer,
     UserUpdateSerializer,
     LoginSerializer
 )
+from common.serializers import ErrorResponseSerializer
 
 @swagger_auto_schema(
     method='post',

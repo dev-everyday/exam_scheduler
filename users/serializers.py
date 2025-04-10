@@ -25,14 +25,9 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             'password': {'required': False, 'help_text': '새로운 비밀번호 (선택)', 'write_only': True}
         }
 
-class LoginSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ['id', 'username', 'password', 'is_superuser', 'created_at']
-        read_only_fields = ['id', 'is_superuser', 'created_at']    
-
-class ErrorResponseSerializer(serializers.Serializer):
-    error = serializers.CharField()
+class LoginSerializer(serializers.Serializer):
+    username = serializers.CharField(help_text='사용자명 (필수)')
+    password = serializers.CharField(help_text='비밀번호 (필수)', write_only=True)
 
 class UserListResponseSerializer(serializers.Serializer):
     users = UserSerializer(many=True)
