@@ -4,7 +4,7 @@
 
 ### 필수 요구사항
 
-- Python 3.8 이상
+- Python 3.10 이상
 - PostgreSQL
 - Redis
 
