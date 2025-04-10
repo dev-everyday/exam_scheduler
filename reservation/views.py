@@ -82,9 +82,14 @@ def admin_reservation_view(request):
     
     관리자는 모든 예약을 조회할 수 있습니다.
     """
-    reservations = Reservation.objects.all().order_by('-created_at')
-    data = ReservationListResponseSerializer({'reservations': ReservationDetailSerializer(reservations, many=True).data})
-    return Response(data.data)
+    try:
+        reservations = Reservation.objects.all().order_by('-created_at')
+        serializer = ReservationDetailSerializer(reservations, many=True)
+        return Response({"reservations": serializer.data})
+    except Exception as e:
+        print(f"예약 목록 조회 중 오류 발생: {str(e)}")
+        return Response(ErrorResponseSerializer({'error': '예약 목록 조회 중 오류가 발생했습니다.'}).data,
+                     status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
 @swagger_auto_schema(
     method='get',
