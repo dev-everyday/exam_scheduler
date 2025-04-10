@@ -79,43 +79,38 @@ class ExamSlot(models.Model):
             current_date += timedelta(days=1)
         
         return slots
-
-    @transaction.atomic
-    def update_capacity(self, count):
-        self.refresh_from_db()
-        
-        if self.current_count + count > self.max_capacity:
-            raise ValidationError("최대 인원 수를 초과할 수 없습니다.")
-        
-        self.current_count += count
-        self.save()
-        
-        return True
-
+    
     @classmethod
     @transaction.atomic
     def update_slots(cls, slots, count):
-        success = True
         updated_slots = []
 
-        for slot in slots:
-            try:
-                if slot.update_capacity(count):
-                    updated_slots.append(slot)
-                else:
-                    success = False
-                    break
-            except ValidationError as e:
-                success = False
-                break
-            except Exception as e:
-                success = False
-                break
+        try:
+            for slot in slots:
+                slot.refresh_from_db() 
 
-        if not success:
-            for slot in updated_slots:
-                try:
-                    slot.update_capacity(-count)
-                except Exception as e:
-                    pass
+                if count > 0:
+                    if slot.current_count + count > slot.max_capacity:
+                        raise ValidationError(f"슬롯 {slot.id}의 최대 인원 수를 초과할 수 없습니다.")
+                
+                slot.current_count += count
+                slot.save(update_fields=['current_count'])
+                
+                updated_slots.append(slot)
+            return True
+                
+        except ValidationError as e:
+            if updated_slots:
+                for slot in updated_slots:
+                    slot.refresh_from_db()
+                    slot.current_count -= count
+                    slot.save(update_fields=['current_count'])
+            raise ValidationError(str(e))
+            
+        except Exception as e:
+            if updated_slots:
+                for slot in updated_slots:
+                        slot.refresh_from_db()
+                        slot.current_count -= count
+                        slot.save(update_fields=['current_count'])
             raise ValidationError("예약 처리 중 오류가 발생했습니다.")
