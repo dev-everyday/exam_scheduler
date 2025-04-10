@@ -10,3 +10,12 @@ class ExamSlotSerializer(serializers.ModelSerializer):
 
     def get_remaining_capacity(self, obj):
         return obj.max_capacity - obj.current_count 
+
+class AvailableSlotSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    hour = serializers.IntegerField()
+    remaining_capacity = serializers.IntegerField()
+
+class AvailableSlotListResponseSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    available_slots = AvailableSlotSerializer(many=True)

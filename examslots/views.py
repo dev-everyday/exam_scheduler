@@ -9,8 +9,9 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 import pytz
 from .models import ExamSlot
-from .serializers import ExamSlotSerializer
+from .serializers import AvailableSlotListResponseSerializer, ExamSlotSerializer
 from django.db import models
+from common.serializers import ErrorResponseSerializer
 
 @swagger_auto_schema(
     method='get',
@@ -26,44 +27,9 @@ from django.db import models
         )
     ],
     responses={
-        200: openapi.Response(
-            description="조회 성공",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    'message': openapi.Schema(type=openapi.TYPE_STRING),
-                    'available_slots': openapi.Schema(
-                        type=openapi.TYPE_ARRAY,
-                        items=openapi.Schema(
-                            type=openapi.TYPE_OBJECT,
-                            properties={
-                                'date': openapi.Schema(type=openapi.TYPE_STRING),
-                                'hour': openapi.Schema(type=openapi.TYPE_INTEGER),
-                                'remaining_capacity': openapi.Schema(type=openapi.TYPE_INTEGER)
-                            }
-                        )
-                    )
-                }
-            )
-        ),
-        400: openapi.Response(
-            description="잘못된 요청",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    'error': openapi.Schema(type=openapi.TYPE_STRING)
-                }
-            )
-        ),
-        401: openapi.Response(
-            description="인증 실패",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={
-                    'detail': openapi.Schema(type=openapi.TYPE_STRING)
-                }
-            )
-        )
+        200: AvailableSlotListResponseSerializer,
+        400: ErrorResponseSerializer,
+        401: ErrorResponseSerializer
     }
 )
 @api_view(['GET'])
@@ -79,18 +45,12 @@ def get_available_slots(request):
     """
     date_str = request.query_params.get('date')
     if not date_str:
-        return Response(
-            {'error': '날짜를 입력해주세요.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response(ErrorResponseSerializer({'error': '날짜를 입력해주세요.'}).data, status=status.HTTP_400_BAD_REQUEST)
     
     try:
         target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
     except ValueError:
-        return Response(
-            {'error': '올바른 날짜 형식이 아닙니다. (YYYY-MM-DD)'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response(ErrorResponseSerializer({'error': '올바른 날짜 형식이 아닙니다. (YYYY-MM-DD)'}).data, status=status.HTTP_400_BAD_REQUEST)
     
     korea_tz = pytz.timezone('Asia/Seoul')
     current_datetime = timezone.now().astimezone(korea_tz)
@@ -101,16 +61,10 @@ def get_available_slots(request):
     max_date = current_date + timedelta(days=90)
     
     if target_date < min_date:
-        return Response({
-            'message': '현재 날짜에서 3일 이상 이후의 날짜만 신청이 가능합니다.',
-            'available_slots': []
-        })
+        return Response(ErrorResponseSerializer({'error': '현재 날짜에서 3일 이상 이후의 날짜만 신청이 가능합니다.'}).data)
     
     if target_date > max_date:
-        return Response({
-            'message': '3개월 이내의 날짜만 신청이 가능합니다.',
-            'available_slots': []
-        })
+        return Response(ErrorResponseSerializer({'error': '3개월 이내의 날짜만 신청이 가능합니다.'}).data)
     
     available_slots = ExamSlot.objects.filter(
         date=target_date,
@@ -122,7 +76,5 @@ def get_available_slots(request):
     
     serializer = ExamSlotSerializer(available_slots, many=True)
     
-    return Response({
-        'message': '예약 가능한 시간대를 조회했습니다.',
-        'available_slots': serializer.data
-    })
+    return Response(AvailableSlotListResponseSerializer({'message': '예약 가능한 시간대를 조회했습니다.', 
+                                                         'available_slots': serializer.data}).data)
