@@ -5,7 +5,7 @@
 ### 필수 요구사항
 
 - Python 3.10 이상
-- PostgreSQL
+- PostgreSQL 14 이상
 - Redis
 
 ### 설치 방법
