@@ -260,37 +260,18 @@ def _admin_reservation_modify_view(request, reservation_id):
         if serializer.is_valid():
             try:
                 validated_data = serializer.validated_data
-                
                 start_time = validated_data.get('start_time', reservation.start_time)
                 end_time = validated_data.get('end_time', reservation.end_time)
                 count = validated_data.get('count', reservation.count)
 
-                if(start_time >= end_time):
-                    return Response(ErrorResponseSerializer({'error': '예약 시작 시간이 종료 시간보다 크거나 같을 수 없습니다.'}).data,
-                                     status=status.HTTP_400_BAD_REQUEST)
-                
-                new_slots = ExamSlot.check_and_get_available_slots(
+                reservation.modify(
                     start_time,
                     end_time,
                     count
                 )
                 
-                with transaction.atomic():
-                    if reservation.status == 'accepted':
-                        ExamSlot.update_slots(reservation.exam_slots.all(), -reservation.count)
-                    
-                    reservation.start_time = start_time
-                    reservation.end_time = end_time
-                    reservation.count = count
-                    reservation.save()
-                    
-                    reservation.exam_slots.set(new_slots)
-                    
-                    if reservation.status == 'accepted':
-                        ExamSlot.update_slots(new_slots, count)
-                    
-                    response_serializer = ReservationDetailSerializer(reservation)
-                    return Response(response_serializer.data, status=status.HTTP_200_OK)
+                response_serializer = ReservationDetailSerializer(reservation)
+                return Response(response_serializer.data, status=status.HTTP_200_OK)
                     
             except ValidationError as e:
                 return Response(ErrorResponseSerializer({'error': str(e)}).data,
@@ -302,15 +283,8 @@ def _admin_reservation_modify_view(request, reservation_id):
     
     elif request.method == 'DELETE':
         try:
-            with transaction.atomic():
-                if reservation.status == 'accepted':
-                    ExamSlot.update_slots(reservation.exam_slots.all(), -reservation.count)
-                
-                reservation.status = 'cancelled'
-                reservation.save()
-                
-                reservation.exam_slots.clear()
-
+            reservation.cancel()
+            
             return Response(status=status.HTTP_204_NO_CONTENT)
         except ValidationError as e:
             return Response(ErrorResponseSerializer({'error': str(e)}).data,
@@ -339,31 +313,14 @@ def _admin_reservation_modify_view(request, reservation_id):
     blocking_timeout=15
 )
 def admin_reservation_confirm_view(request, reservation_id):
-    reservation = get_object_or_404(Reservation, id=reservation_id)
-
-    if reservation.status != 'pending':
-        return Response(ErrorResponseSerializer({'error': '대기 중인 예약만 확정할 수 있습니다.'}).data,
-                         status=status.HTTP_400_BAD_REQUEST)
-    
-    exam_slots = list(reservation.exam_slots.all())
-    
-    if not exam_slots:
-        return Response(ErrorResponseSerializer({'error': '예약에 해당하는 시간대가 없습니다.'}).data,
-                         status=status.HTTP_400_BAD_REQUEST)
-    
     try:
-        with transaction.atomic():
-            reservation.status = 'accepted'
-            reservation.save()
-            
-            ExamSlot.update_slots(exam_slots, reservation.count)
-            
-            for slot in exam_slots:
-                slot.refresh_from_db()
-
-            serializer = ReservationDetailSerializer(reservation)
-            return Response(serializer.data)
-            
+        reservation = get_object_or_404(Reservation, id=reservation_id)
+        
+        reservation.confirm()
+        
+        serializer = ReservationDetailSerializer(reservation)
+        return Response(serializer.data)
+                
     except ValidationError as e:
         return Response(ErrorResponseSerializer({'error': str(e)}).data,
                          status=status.HTTP_400_BAD_REQUEST)

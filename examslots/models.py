@@ -81,7 +81,6 @@ class ExamSlot(models.Model):
         return slots
     
     @classmethod
-    @transaction.atomic
     def update_slots(cls, slots, count):
         updated_slots = []
 
