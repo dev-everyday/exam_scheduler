@@ -12,12 +12,14 @@ class ReservationSerializer(serializers.Serializer):
         format="%Y-%m-%d %H:%M",
         input_formats=["%Y-%m-%d %H:%M"],
         help_text="예약 시작 시간 (YYYY-MM-DD HH:MM 형식, 예: 2025-04-15 09:00)",
+        default="2025-04-10 14:00",
         required=False
     )
     end_time = serializers.DateTimeField(
         format="%Y-%m-%d %H:%M",
         input_formats=["%Y-%m-%d %H:%M"],
         help_text="예약 종료 시간 (YYYY-MM-DD HH:MM 형식, 예: 2025-04-15 11:00)",
+        default="2025-04-10 14:00",
         required=False
     )
     count = serializers.IntegerField(
@@ -74,3 +76,6 @@ class ReservationDetailSerializer(serializers.ModelSerializer):
         model = Reservation
         fields = ['id', 'user', 'start_time', 'end_time', 'status', 'created_at', 'count']
         read_only_fields = ['id', 'user', 'status', 'created_at'] 
+
+class ReservationListResponseSerializer(serializers.Serializer):
+    reservations = ReservationDetailSerializer(many=True)

@@ -61,10 +61,12 @@ def get_available_slots(request):
     max_date = current_date + timedelta(days=90)
     
     if target_date < min_date:
-        return Response(ErrorResponseSerializer({'error': '현재 날짜에서 3일 이상 이후의 날짜만 신청이 가능합니다.'}).data)
+        return Response(ErrorResponseSerializer({'error': '현재 날짜에서 3일 이상 이후의 날짜만 신청이 가능합니다.'}).data,
+                         status=status.HTTP_400_BAD_REQUEST)
     
     if target_date > max_date:
-        return Response(ErrorResponseSerializer({'error': '3개월 이내의 날짜만 신청이 가능합니다.'}).data)
+        return Response(ErrorResponseSerializer({'error': '3개월 이내의 날짜만 신청이 가능합니다.'}).data,
+                         status=status.HTTP_400_BAD_REQUEST)
     
     available_slots = ExamSlot.objects.filter(
         date=target_date,
