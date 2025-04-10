@@ -63,7 +63,7 @@ SECRET_KEY=your_secret_key
 # Window의 경우 https://github.com/microsoftarchive/redis/releases 에서 Redis-x64-xxx.msi 다운로드 및 설치
 redis-server
 
-# Redis 설치 및 실행 (Linux)
+# Redis 설치 및 실행 (Mac)
 brew install redis
 brew services start redis
 
