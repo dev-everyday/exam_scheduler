@@ -1,13 +1,11 @@
 from datetime import timedelta
 from django.utils import timezone
 from .models import ExamSlot
-import pytz
 
 def initialize_exam_slots():
     ExamSlot.objects.all().delete()
     
-    korea_tz = pytz.timezone('Asia/Seoul')
-    now = timezone.now().astimezone(korea_tz)
+    now = timezone.now()
     next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     three_months_later = next_hour + timedelta(days=90)
     

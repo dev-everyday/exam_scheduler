@@ -3,7 +3,6 @@ from .models import Reservation
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import timedelta
-import pytz
 
 User = get_user_model()
 
@@ -43,8 +42,7 @@ class ReservationSerializer(serializers.Serializer):
                 'end_time': '시험 종료 시간은 정각(00분)이어야 합니다.'
             })
 
-        korea_tz = pytz.timezone('Asia/Seoul')
-        current_datetime = timezone.now().astimezone(korea_tz)
+        current_datetime = timezone.now()
 
         if start_time:
             min_datetime = current_datetime + timedelta(days=3)

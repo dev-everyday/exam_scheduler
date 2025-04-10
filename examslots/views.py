@@ -7,7 +7,6 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from datetime import datetime, timedelta
 from django.utils import timezone
-import pytz
 from .models import ExamSlot
 from .serializers import AvailableSlotListResponseSerializer, ExamSlotSerializer
 from django.db import models
@@ -52,8 +51,7 @@ def get_available_slots(request):
     except ValueError:
         return Response(ErrorResponseSerializer({'error': '올바른 날짜 형식이 아닙니다. (YYYY-MM-DD)'}).data, status=status.HTTP_400_BAD_REQUEST)
     
-    korea_tz = pytz.timezone('Asia/Seoul')
-    current_datetime = timezone.now().astimezone(korea_tz)
+    current_datetime = timezone.now()
     current_date = current_datetime.date()
     current_hour = current_datetime.hour
     
