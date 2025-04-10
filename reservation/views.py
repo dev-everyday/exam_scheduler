@@ -3,14 +3,14 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
-from drf_yasg import openapi
-from django.db import transaction, connection
-from django.core.exceptions import ValidationError, PermissionDenied
+from django.db import transaction
+from django.core.exceptions import ValidationError
 from common.serializers import ErrorResponseSerializer
 from .models import Reservation
 from .serializers import ReservationListResponseSerializer, ReservationSerializer, ReservationDetailSerializer
 from examslots.models import ExamSlot
 from django.shortcuts import get_object_or_404
+from common.distributed_lock import with_distributed_lock
 
 @swagger_auto_schema(
     method='post',
@@ -213,6 +213,7 @@ def reservation_detail_view(request):
         400: ErrorResponseSerializer,
         403: ErrorResponseSerializer,
         404: ErrorResponseSerializer,
+        409: ErrorResponseSerializer,
         500: ErrorResponseSerializer
     }
 )
@@ -226,23 +227,30 @@ def reservation_detail_view(request):
         401: ErrorResponseSerializer,
         403: ErrorResponseSerializer,
         404: ErrorResponseSerializer,
+        409: ErrorResponseSerializer,
         500: ErrorResponseSerializer
     }
 )
 @api_view(['GET', 'PATCH', 'DELETE'])
 @permission_classes([IsAdminUser])
-@transaction.atomic
 def admin_reservation_detail_view(request, reservation_id):
-    reservation = get_object_or_404(Reservation, id=reservation_id)
-    
     if request.method == 'GET':
+        reservation = get_object_or_404(Reservation, id=reservation_id)
         serializer = ReservationDetailSerializer(reservation)
         return Response(serializer.data, status=status.HTTP_200_OK)
     
-    elif request.method == 'PATCH':
-        # if reservation.status == 'accepted':
-            # TODO: 확정된 예약 수정 시 락 획득 필요요
+    return _admin_reservation_modify_view(request, reservation_id)
 
+@with_distributed_lock(
+    resource_key_func=lambda request, reservation_id: f"reservation:{reservation_id}",
+    timeout=60,
+    blocking_timeout=15
+)
+@transaction.atomic
+def _admin_reservation_modify_view(request, reservation_id):
+    reservation = get_object_or_404(Reservation, id=reservation_id)
+    
+    if request.method == 'PATCH':
         serializer = ReservationSerializer(data=request.data, partial=True)
         if serializer.is_valid():
             try:
@@ -263,12 +271,18 @@ def admin_reservation_detail_view(request, reservation_id):
                 )
                 
                 with transaction.atomic():
+                    if reservation.status == 'accepted':
+                        ExamSlot.update_slots(reservation.exam_slots.all(), -reservation.count)
+                    
                     reservation.start_time = start_time
                     reservation.end_time = end_time
                     reservation.count = count
                     reservation.save()
                     
                     reservation.exam_slots.set(new_slots)
+                    
+                    if reservation.status == 'accepted':
+                        ExamSlot.update_slots(new_slots, count)
                     
                     response_serializer = ReservationDetailSerializer(reservation)
                     return Response(response_serializer.data, status=status.HTTP_200_OK)
@@ -299,8 +313,7 @@ def admin_reservation_detail_view(request, reservation_id):
         except Exception as e:
             return Response(ErrorResponseSerializer({'error': '예약 처리 중 오류가 발생했습니다. 다시 시도해주세요.'}).data,
                              status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-        
+
 @swagger_auto_schema(
     method='post',
     operation_summary="관리자용 예약 확정 API",
@@ -309,11 +322,17 @@ def admin_reservation_detail_view(request, reservation_id):
         200: ReservationDetailSerializer,
         400: ErrorResponseSerializer,
         403: ErrorResponseSerializer,
-        404: ErrorResponseSerializer
+        404: ErrorResponseSerializer,
+        409: ErrorResponseSerializer
     }
 )
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
+@with_distributed_lock(
+    resource_key_func=lambda request, reservation_id: f"reservation:{reservation_id}",
+    timeout=60,
+    blocking_timeout=15
+)
 def admin_reservation_confirm_view(request, reservation_id):
     reservation = get_object_or_404(Reservation, id=reservation_id)
 
